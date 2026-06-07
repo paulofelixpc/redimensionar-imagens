@@ -1,0 +1,16 @@
+[project]
+name = "redimensionar"
+version = "1.0.0"
+description = "Redimensiona imagens para 1200x1200, remove fundo com IA, otimiza para SEO"
+requires-python = ">=3.10"
+dependencies = [
+    "Pillow>=12.0",
+    "rembg[cpu]>=2.0",
+    "PySide6>=6.6",
+]
+
+[project.scripts]
+redimensionar = "redimensionar.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
