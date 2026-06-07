@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import traceback
 from PIL import Image
@@ -94,7 +95,9 @@ VERSION = "1.1.0"
 
 class App(QMainWindow):
     def __init__(self):
+        log.debug("App.__init__: inicio")
         super().__init__()
+        log.debug("App.__init__: super ok")
         self.setWindowTitle(f"Redimensionar Imagens — {TAMANHO}x{TAMANHO}")
         self.setMinimumSize(720, 640)
 
@@ -107,7 +110,9 @@ class App(QMainWindow):
         self._taskbar_button = None
         self._taskbar_progress = None
 
+        log.debug("App.__init__: atributos ok")
         central = QWidget()
+        log.debug("App.__init__: QWidget ok")
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setSpacing(8)
@@ -229,14 +234,13 @@ class App(QMainWindow):
         self.setTabOrder(self.btn_logo, self.escala_slider)
         self.setTabOrder(self.escala_slider, self.btn_processar)
 
+        log.debug("App.__init__: criando menu")
         self._criar_menu()
-        self._criar_tray()
+        log.debug("App.__init__: menu ok")
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Pronto")
-
-        QTimer.singleShot(0, self._init_taskbar)
 
     def _criar_menu(self):
         bar = self.menuBar()
@@ -264,36 +268,10 @@ class App(QMainWindow):
             "Totalmente offline.")
 
     def _criar_tray(self):
-        try:
-            icon = self.windowIcon()
-            if icon.isNull():
-                return
-            self._tray = QSystemTrayIcon(icon, self)
-            menu = QMenu(self)
-            menu.addAction("Abrir", self.show)
-            menu.addAction("Sair", self.close)
-            self._tray.setContextMenu(menu)
-            self._tray.show()
-        except Exception:
-            log.exception("Falha ao criar tray icon")
-            self._tray = None
+        pass
 
     def _init_taskbar(self):
-        if not HAS_TASKBAR:
-            return
-        hwnd = self.windowHandle()
-        if hwnd is None:
-            return
-        try:
-            self._taskbar_button = QWinTaskbarButton(self)
-            self._taskbar_button.setWindow(hwnd)
-            self._taskbar_progress = self._taskbar_button.progress()
-            self._taskbar_progress.setRange(0, 100)
-            self._taskbar_progress.hide()
-        except Exception:
-            log.exception("Falha ao inicializar taskbar progress")
-            self._taskbar_button = None
-            self._taskbar_progress = None
+        pass
 
     def selecionar(self):
         arquivos, _ = QFileDialog.getOpenFileNames(
@@ -324,16 +302,22 @@ class App(QMainWindow):
             return
         caminho = self.arquivos[self.previa_index]
         try:
+            log.debug("mostrar_previa: abrindo %s", caminho)
             img = Image.open(caminho)
+            log.debug("mostrar_previa: Image.open ok, size=%s", img.size)
             img = corrigir_orientacao(img)
+            log.debug("mostrar_previa: corrigir_orientacao ok")
             self.crop_widget.set_image(img)
+            log.debug("mostrar_previa: set_image ok")
 
             if caminho in self._coords_por_imagem:
                 left, top, lado = self._coords_por_imagem[caminho]
                 self.crop_widget.set_crop_coords(left, top, lado)
+                log.debug("mostrar_previa: set_crop_coords ok")
 
             nome = os.path.basename(caminho)
             self.lbl_contador.setText(f"{self.previa_index + 1}/{len(self.arquivos)} — {nome}")
+            log.debug("mostrar_previa: texto setado")
         except Exception:
             log.exception("Erro ao abrir prévia: %s", caminho)
 
@@ -421,9 +405,12 @@ class App(QMainWindow):
         self.btn_logo.setEnabled(not bloqueado and self.chk_marca.isChecked())
 
     def _atualizar_progresso(self, nome, atual, total):
-        if self._taskbar_progress and total:
-            self._taskbar_progress.setValue(int(atual * 100 / total))
-            self._taskbar_progress.show()
+        if self._taskbar_progress is not None and total:
+            try:
+                self._taskbar_progress.setValue(int(atual * 100 / total))
+                self._taskbar_progress.show()
+            except Exception:
+                pass
 
         if nome:
             self.status_bar.showMessage(f"Processando: {nome}")
@@ -442,20 +429,25 @@ class App(QMainWindow):
         if ok:
             self.btn_processar.setEnabled(True)
 
-        if self._taskbar_progress:
-            self._taskbar_progress.setValue(100 if ok else 0)
-            QTimer.singleShot(1500, self._taskbar_progress.hide)
+        if self._taskbar_progress is not None:
+            try:
+                self._taskbar_progress.setValue(100 if ok else 0)
+                QTimer.singleShot(1500, self._taskbar_progress.hide)
+            except Exception:
+                pass
 
         texto = f"{ok} imagem(ns) salva(s)"
         if erros:
             texto += f" com {len(erros)} erro(s)"
         self.status_bar.showMessage(texto)
 
-        if self._tray and self._tray.supportsMessages():
-            titulo = "Processamento Concluído"
-            corpo = f"{ok} de {len(self.arquivos)} imagem(ns) salva(s) em:\n{pasta}"
-            self._tray.showMessage(titulo, corpo, QSystemTrayIcon.Information, 5000)
-            QTimer.singleShot(500, self._tray.show)
+        if self._tray is not None:
+            try:
+                titulo = "Processamento Concluído"
+                corpo = f"{ok} de {len(self.arquivos)} imagem(ns) salva(s) em:\n{pasta}"
+                self._tray.showMessage(titulo, corpo, QSystemTrayIcon.Information, 5000)
+            except Exception:
+                pass
 
         msg = f"{ok} imagem(ns) salva(s) em:\n{pasta}"
         if erros:
@@ -465,22 +457,36 @@ class App(QMainWindow):
 
 def _excepthook(tp, val, tb):
     log.critical("Exceção não capturada", exc_info=(tp, val, tb))
-    import sys
     sys.__excepthook__(tp, val, tb)
 
 
 def main():
-    import sys
+    try:
+        with open(os.path.expanduser("~/.ls-imagecomm/debug_main.txt"), "w") as f:
+            f.write("main() foi chamado!\n")
+            f.write(f"__name__={__name__}\n")
+            f.write(f"sys.frozen={getattr(sys, 'frozen', 'NAO')}\n")
+    except Exception:
+        pass
+    log.info("LS Imagecomm v%s — iniciando", VERSION)
     sys.excepthook = _excepthook
 
+    log.debug("main: criando QApplication")
     app = QApplication(sys.argv)
+    log.debug("main: QApplication ok, setando style")
     app.setStyle("Fusion")
+    log.debug("main: style ok")
     try:
         icon = QIcon(os.path.join(os.path.dirname(__file__), "app_icon.png"))
         if not icon.isNull():
             app.setWindowIcon(icon)
     except Exception:
         pass
+    log.debug("main: criando App()")
     janela = App()
+    log.debug("main: App() ok, show()")
     janela.show()
     sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()

@@ -297,4 +297,5 @@ class CropWidget(QWidget):
             img_rgb = pil_img.convert("RGB")
             data = img_rgb.tobytes("raw", "RGB")
             qimg = QImage(data, img_rgb.width, img_rgb.height, QImage.Format_RGB888)
+        self._keep_data = data  # PySide6: QImage n~ao copia data, precisa manter alive
         return QPixmap.fromImage(qimg)
