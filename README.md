@@ -21,13 +21,18 @@ Ferramenta desktop **offline** para redimensionar imagens para **1200×1200**, r
 
 ## Instalação
 
-### Opção 1 — Instalador (recomendado)
+## Downloads
 
-Baixe o `LS Imagecomm Setup.exe` e execute. Não precisa de Python.
+| Versão | Link |
+|--------|------|
+| Instalador (recomendado) | [LS Imagecomm Setup.exe](https://github.com/paulofelixpc/redimensionar-imagens/releases/latest) |
+| Código-fonte | [github.com/paulofelixpc/redimensionar-imagens](https://github.com/paulofelixpc/redimensionar-imagens) |
 
-### Opção 2 — Python (dev)
+## Instalação
 
 ```bash
+git clone https://github.com/paulofelixpc/redimensionar-imagens
+cd redimensionar-imagens
 python -m venv .venv
 .venv\Scripts\pip install -e .
 .venv\Scripts\python -m redimensionar
