@@ -89,6 +89,9 @@ class WorkerBatch(QThread):
         self.finalizado.emit(ok, erros, self.pasta)
 
 
+VERSION = "1.1.0"
+
+
 class App(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -257,30 +260,38 @@ class App(QMainWindow):
             "<b>LS Imagecomm</b><br><br>"
             "Redimensiona imagens para 1200×1200,<br>"
             "remove fundo com IA e adiciona marca d'água.<br><br>"
-            f"Versão: 1.0.0<br>"
+            f"Versão: {VERSION}<br>"
             "Totalmente offline.")
 
     def _criar_tray(self):
-        icon = self.windowIcon()
-        if icon.isNull():
-            return
-        self._tray = QSystemTrayIcon(icon, self)
-        menu = QMenu(self)
-        menu.addAction("Abrir", self.show)
-        menu.addAction("Sair", self.close)
-        self._tray.setContextMenu(menu)
-        self._tray.show()
+        try:
+            icon = self.windowIcon()
+            if icon.isNull():
+                return
+            self._tray = QSystemTrayIcon(icon, self)
+            menu = QMenu(self)
+            menu.addAction("Abrir", self.show)
+            menu.addAction("Sair", self.close)
+            self._tray.setContextMenu(menu)
+            self._tray.show()
+        except Exception:
+            log.exception("Falha ao criar tray icon")
+            self._tray = None
 
     def _init_taskbar(self):
         if not HAS_TASKBAR:
             return
+        hwnd = self.windowHandle()
+        if hwnd is None:
+            return
         try:
             self._taskbar_button = QWinTaskbarButton(self)
-            self._taskbar_button.setWindow(self.windowHandle())
+            self._taskbar_button.setWindow(hwnd)
             self._taskbar_progress = self._taskbar_button.progress()
             self._taskbar_progress.setRange(0, 100)
             self._taskbar_progress.hide()
         except Exception:
+            log.exception("Falha ao inicializar taskbar progress")
             self._taskbar_button = None
             self._taskbar_progress = None
 
@@ -311,12 +322,12 @@ class App(QMainWindow):
     def mostrar_previa(self):
         if not self.arquivos:
             return
+        caminho = self.arquivos[self.previa_index]
         try:
-            img = Image.open(self.arquivos[self.previa_index])
+            img = Image.open(caminho)
             img = corrigir_orientacao(img)
             self.crop_widget.set_image(img)
 
-            caminho = self.arquivos[self.previa_index]
             if caminho in self._coords_por_imagem:
                 left, top, lado = self._coords_por_imagem[caminho]
                 self.crop_widget.set_crop_coords(left, top, lado)
@@ -324,7 +335,7 @@ class App(QMainWindow):
             nome = os.path.basename(caminho)
             self.lbl_contador.setText(f"{self.previa_index + 1}/{len(self.arquivos)} — {nome}")
         except Exception:
-            pass
+            log.exception("Erro ao abrir prévia: %s", caminho)
 
     def anterior(self):
         if self.arquivos:
@@ -452,8 +463,16 @@ class App(QMainWindow):
         QMessageBox.information(self, "Concluído", msg)
 
 
+def _excepthook(tp, val, tb):
+    log.critical("Exceção não capturada", exc_info=(tp, val, tb))
+    import sys
+    sys.__excepthook__(tp, val, tb)
+
+
 def main():
     import sys
+    sys.excepthook = _excepthook
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     try:
