@@ -242,6 +242,8 @@ class App(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Pronto")
 
+        QTimer.singleShot(0, self._init_extras)
+
     def _criar_menu(self):
         bar = self.menuBar()
 
@@ -267,11 +269,43 @@ class App(QMainWindow):
             f"Versão: {VERSION}<br>"
             "Totalmente offline.")
 
+    def _init_extras(self):
+        log.debug("_init_extras: iniciando")
+        self._criar_tray()
+        self._init_taskbar()
+        log.debug("_init_extras: ok")
+
     def _criar_tray(self):
-        pass
+        try:
+            icon = self.windowIcon()
+            if icon.isNull():
+                return
+            self._tray = QSystemTrayIcon(icon, self)
+            menu = QMenu(self)
+            menu.addAction("Abrir", self.show)
+            menu.addAction("Sair", self.close)
+            self._tray.setContextMenu(menu)
+            self._tray.show()
+        except Exception:
+            log.exception("Falha ao criar tray icon")
+            self._tray = None
 
     def _init_taskbar(self):
-        pass
+        if not HAS_TASKBAR:
+            return
+        hwnd = self.windowHandle()
+        if hwnd is None:
+            return
+        try:
+            self._taskbar_button = QWinTaskbarButton(self)
+            self._taskbar_button.setWindow(hwnd)
+            self._taskbar_progress = self._taskbar_button.progress()
+            self._taskbar_progress.setRange(0, 100)
+            self._taskbar_progress.hide()
+        except Exception:
+            log.exception("Falha ao inicializar taskbar progress")
+            self._taskbar_button = None
+            self._taskbar_progress = None
 
     def selecionar(self):
         arquivos, _ = QFileDialog.getOpenFileNames(
@@ -304,20 +338,18 @@ class App(QMainWindow):
         try:
             log.debug("mostrar_previa: abrindo %s", caminho)
             img = Image.open(caminho)
-            log.debug("mostrar_previa: Image.open ok, size=%s", img.size)
+            log.debug("mostrar_previa: Image.open ok, mode=%s size=%s", img.mode, img.size)
             img = corrigir_orientacao(img)
-            log.debug("mostrar_previa: corrigir_orientacao ok")
+            log.debug("mostrar_previa: corrigir_orientacao ok, mode=%s", img.mode)
             self.crop_widget.set_image(img)
             log.debug("mostrar_previa: set_image ok")
 
             if caminho in self._coords_por_imagem:
                 left, top, lado = self._coords_por_imagem[caminho]
                 self.crop_widget.set_crop_coords(left, top, lado)
-                log.debug("mostrar_previa: set_crop_coords ok")
 
             nome = os.path.basename(caminho)
             self.lbl_contador.setText(f"{self.previa_index + 1}/{len(self.arquivos)} — {nome}")
-            log.debug("mostrar_previa: texto setado")
         except Exception:
             log.exception("Erro ao abrir prévia: %s", caminho)
 

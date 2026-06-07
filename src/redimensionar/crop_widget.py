@@ -1,3 +1,4 @@
+import io
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QImage, QWheelEvent, QCursor
 from PySide6.QtCore import Qt, QRect, QPoint, Signal
@@ -290,12 +291,14 @@ class CropWidget(QWidget):
             painter.drawRect(hx - handle // 2, hy - handle // 2, handle, handle)
 
     def _pil_to_qpixmap(self, pil_img):
+        buf = io.BytesIO()
         if pil_img.mode == "RGBA":
-            data = pil_img.tobytes("raw", "RGBA")
-            qimg = QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888)
+            pil_img.save(buf, format="PNG")
+            qimg = QImage()
+            qimg.loadFromData(buf.getvalue(), "PNG")
         else:
             img_rgb = pil_img.convert("RGB")
-            data = img_rgb.tobytes("raw", "RGB")
-            qimg = QImage(data, img_rgb.width, img_rgb.height, QImage.Format_RGB888)
-        self._keep_data = data  # PySide6: QImage n~ao copia data, precisa manter alive
+            img_rgb.save(buf, format="JPEG")
+            qimg = QImage()
+            qimg.loadFromData(buf.getvalue(), "JPG")
         return QPixmap.fromImage(qimg)
