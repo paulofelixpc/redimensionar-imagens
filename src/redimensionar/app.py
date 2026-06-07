@@ -493,13 +493,6 @@ def _excepthook(tp, val, tb):
 
 
 def main():
-    try:
-        with open(os.path.expanduser("~/.ls-imagecomm/debug_main.txt"), "w") as f:
-            f.write("main() foi chamado!\n")
-            f.write(f"__name__={__name__}\n")
-            f.write(f"sys.frozen={getattr(sys, 'frozen', 'NAO')}\n")
-    except Exception:
-        pass
     log.info("LS Imagecomm v%s — iniciando", VERSION)
     sys.excepthook = _excepthook
 
@@ -508,12 +501,24 @@ def main():
     log.debug("main: QApplication ok, setando style")
     app.setStyle("Fusion")
     log.debug("main: style ok")
+    ico_path = os.path.join(os.path.dirname(__file__), "app_icon.png")
+    if not os.path.isfile(ico_path):
+        try:
+            import sys as _sys
+            alt = os.path.join(getattr(_sys, '_MEIPASS', ''), 'redimensionar', 'app_icon.png')
+            if os.path.isfile(alt):
+                ico_path = alt
+        except Exception:
+            pass
     try:
-        icon = QIcon(os.path.join(os.path.dirname(__file__), "app_icon.png"))
+        icon = QIcon(ico_path)
         if not icon.isNull():
             app.setWindowIcon(icon)
+            log.debug("Icone carregado de: %s", ico_path)
+        else:
+            log.debug("Icone nulo: %s", ico_path)
     except Exception:
-        pass
+        log.exception("Falha ao carregar icone: %s", ico_path)
     log.debug("main: criando App()")
     janela = App()
     log.debug("main: App() ok, show()")
