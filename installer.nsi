@@ -12,7 +12,7 @@ SetDatablockOptimize On
 BrandingText "LS Imagecomm"
 
 !define PRODUCT "LS Imagecomm"
-!define VERSION "1.0.0"
+!define VERSION "1.3.0"
 !define PUBLISHER "LS Imagecomm"
 !define EXE "Redimensionar Imagens.exe"
 !define ICO "src\redimensionar\app_icon.ico"

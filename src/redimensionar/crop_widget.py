@@ -1,6 +1,6 @@
 import io
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QImage, QWheelEvent, QCursor
+from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QImage, QWheelEvent, QCursor, QPainterPath
 from PySide6.QtCore import Qt, QRect, QPoint, Signal
 from PIL import Image
 
@@ -250,9 +250,24 @@ class CropWidget(QWidget):
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
         if self._pil is None:
-            painter.fillRect(self.rect(), QColor("#e0e0e0"))
-            painter.setPen(QColor("#999"))
-            painter.drawText(self.rect(), Qt.AlignCenter, "Nenhuma imagem")
+            painter.setRenderHint(QPainter.Antialiasing)
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, self.width(), self.height(), 8, 8)
+            painter.setClipPath(path)
+            painter.fillPath(path, QColor("#E8E8EE"))
+            painter.setPen(QPen(QColor("#94A3B8"), 1))
+            painter.drawRoundedRect(0, 0, self.width() - 1, self.height() - 1, 8, 8)
+            painter.setClipping(False)
+            painter.setPen(QColor("#CCC"))
+            font = painter.font()
+            font.setPointSize(36)
+            painter.setFont(font)
+            cy = self.height() // 2
+            painter.drawText(QRect(0, cy - 50, self.width(), 60), Qt.AlignCenter, "🖼")
+            font.setPointSize(13)
+            painter.setFont(font)
+            painter.setPen(QColor("#AAA"))
+            painter.drawText(QRect(0, cy + 10, self.width(), 30), Qt.AlignCenter, "Selecione imagens para começar")
             return
 
         z = self._zoom

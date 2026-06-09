@@ -73,9 +73,12 @@ def ajustar_qualidade(img: Image.Image, max_bytes: int) -> io.BytesIO:
 
 
 def remover_fundo(img: Image.Image, escala_porc: int = 100) -> Image.Image:
-    from rembg import remove as rembg_remove
+    from rembg import remove as rembg_remove, new_session
 
-    saida = rembg_remove(img)
+    log.debug("remover_fundo: escala_porc=%d img.size=%s", escala_porc, img.size)
+
+    sessao = new_session("birefnet-general")
+    saida = rembg_remove(img, session=sessao)
     if saida.mode != "RGBA":
         saida = saida.convert("RGBA")
 
@@ -92,7 +95,7 @@ def remover_fundo(img: Image.Image, escala_porc: int = 100) -> Image.Image:
     if lado_max == 0:
         return Image.new("RGB", (TAMANHO, TAMANHO), (255, 255, 255))
 
-    fator = (escala_porc / 100.0) * TAMANHO / lado_max
+    fator = escala_porc / 100.0
     novo_w = max(1, int(pw * fator))
     novo_h = max(1, int(ph * fator))
     produto_redim = produto.resize((novo_w, novo_h), Image.LANCZOS)

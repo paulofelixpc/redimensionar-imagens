@@ -6,11 +6,12 @@ from PIL import Image
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QLineEdit, QRadioButton, QGroupBox,
-    QFileDialog, QMessageBox, QStatusBar, QSlider, QCheckBox,
-    QMenuBar, QMenu, QSystemTrayIcon,
+    QLabel, QPushButton, QLineEdit, QRadioButton,
+    QFileDialog, QMessageBox, QSlider, QCheckBox,
+    QMenuBar, QMenu, QSystemTrayIcon, QProgressBar,
+    QFrame, QSpacerItem, QSizePolicy, QGraphicsDropShadowEffect,
 )
-from PySide6.QtGui import QPixmap, QImage, QIcon, QShortcut, QKeySequence, QAction
+from PySide6.QtGui import QPixmap, QImage, QIcon, QShortcut, QKeySequence, QAction, QColor
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 
 try:
@@ -26,6 +27,8 @@ from redimensionar.image_processor import (
 )
 from redimensionar.crop_widget import CropWidget
 from redimensionar.logger import get_logger
+from redimensionar.theme import aplicar_tema
+
 
 log = get_logger("app")
 
@@ -33,6 +36,7 @@ log = get_logger("app")
 class WorkerBatch(QThread):
     progresso = Signal(str, int, int)
     finalizado = Signal(int, list, str)
+    cancelado = Signal()
 
     def __init__(self, arquivos, pasta, nome_base, remover, max_bytes, coords_list, escala_porc=100, logo_path=None):
         super().__init__()
@@ -44,6 +48,10 @@ class WorkerBatch(QThread):
         self.coords_list = coords_list
         self.escala_porc = escala_porc
         self.logo_path = logo_path
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
 
     def run(self):
         erros = []
@@ -52,6 +60,11 @@ class WorkerBatch(QThread):
         log.info("Processamento iniciado — %d imagem(ns)", total)
 
         for i, caminho in enumerate(self.arquivos):
+            if self._cancelled:
+                log.info("Processamento cancelado pelo usuário")
+                self.cancelado.emit()
+                return
+
             try:
                 self.progresso.emit(os.path.basename(caminho), i, total)
                 img = Image.open(caminho)
@@ -60,6 +73,7 @@ class WorkerBatch(QThread):
                 img = recortar_e_redimensionar(img, left, top, lado)
 
                 if self.remover:
+                    log.debug("WorkerBatch: chamando remover_fundo com escala=%d", self.escala_porc)
                     img = remover_fundo(img, self.escala_porc)
 
                 if self.logo_path:
@@ -86,11 +100,16 @@ class WorkerBatch(QThread):
 
             self.progresso.emit("", i + 1, total)
 
+        if self._cancelled:
+            log.info("Processamento cancelado pelo usuário")
+            self.cancelado.emit()
+            return
+
         log.info("Processamento finalizado — %d ok, %d erros", ok, len(erros))
         self.finalizado.emit(ok, erros, self.pasta)
 
 
-VERSION = "1.1.0"
+VERSION = "1.3.0"
 
 
 class App(QMainWindow):
@@ -99,7 +118,8 @@ class App(QMainWindow):
         super().__init__()
         log.debug("App.__init__: super ok")
         self.setWindowTitle(f"Redimensionar Imagens — {TAMANHO}x{TAMANHO}")
-        self.setMinimumSize(720, 640)
+        self.setMinimumSize(860, 680)
+        self.resize(960, 760)
 
         self.arquivos = []
         self.previa_index = 0
@@ -111,113 +131,227 @@ class App(QMainWindow):
         self._taskbar_progress = None
 
         log.debug("App.__init__: atributos ok")
+        self._config_path = os.path.join(os.path.expanduser("~"), ".ls-imagecomm", "config.json")
+        self._dark_mode = self._load_config("dark_mode", False)
+
+        # Create crop widget first (sidebar controls reference it)
+        self.crop_widget = CropWidget()
+
         central = QWidget()
         log.debug("App.__init__: QWidget ok")
         self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setSpacing(8)
-        layout.setContentsMargins(16, 12, 16, 12)
 
-        modo_group = QGroupBox("Modo")
-        layout_modo = QVBoxLayout(modo_group)
-        self.rb_redim = QRadioButton("Apenas redimensionar (máx 2MB)")
-        self.rb_rem = QRadioButton("Remover fundo + redimensionar (máx 350KB)")
+        # ── ROOT: horizontal split with 24px outer margins and 24px spacing ──
+        root = QHBoxLayout(central)
+        root.setSpacing(24)
+        root.setContentsMargins(24, 24, 24, 24)
+
+        # ════════════════════════════════════════════════════════════════════
+        # ── LEFT: Stage ──
+        # ════════════════════════════════════════════════════════════════════
+        left = QVBoxLayout()
+        left.setSpacing(0)
+
+        # Stage container
+        stage = QFrame()
+        stage.setObjectName("stage")
+        stage_layout = QVBoxLayout(stage)
+        stage_layout.setContentsMargins(0, 0, 0, 0)
+        stage_layout.addWidget(self.crop_widget)
+        left.addWidget(stage, stretch=1)
+
+        # Controls below stage
+        ctrl_area = QVBoxLayout()
+        ctrl_area.setSpacing(8)
+        ctrl_area.setContentsMargins(0, 16, 0, 0)
+
+        # Zoom buttons centered
+        zoom_layout = QHBoxLayout()
+        zoom_layout.setSpacing(4)
+        zoom_layout.addStretch()
+        self.btn_zoom_out = QPushButton("−")
+        self.btn_zoom_out.setToolTip("Reduzir zoom (Ctrl+-)")
+        self.btn_zoom_out.setFixedSize(40, 34)
+        self.btn_zoom_out.setStyleSheet("QPushButton { font-size: 20px; font-weight: 700; }")
+        self.btn_zoom_out.clicked.connect(self.crop_widget.zoom_out)
+        zoom_layout.addWidget(self.btn_zoom_out)
+        btn_zoom_fit = QPushButton("Ajustar")
+        btn_zoom_fit.setToolTip("Ajustar zoom à janela (Ctrl+0)")
+        btn_zoom_fit.setFixedHeight(34)
+        btn_zoom_fit.setStyleSheet("QPushButton { padding: 0 18px; font-size: 10pt; }")
+        btn_zoom_fit.clicked.connect(self.crop_widget.zoom_fit)
+        zoom_layout.addWidget(btn_zoom_fit)
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_in.setToolTip("Aumentar zoom (Ctrl++)")
+        self.btn_zoom_in.setFixedSize(40, 34)
+        self.btn_zoom_in.setStyleSheet("QPushButton { font-size: 20px; font-weight: 700; }")
+        self.btn_zoom_in.clicked.connect(self.crop_widget.zoom_in)
+        zoom_layout.addWidget(self.btn_zoom_in)
+        zoom_layout.addStretch()
+        ctrl_area.addLayout(zoom_layout)
+
+        # Progress bar
+        self.progresso_barra = QProgressBar()
+        self.progresso_barra.setRange(0, 100)
+        self.progresso_barra.setValue(0)
+        self.progresso_barra.setTextVisible(False)
+        self.progresso_barra.hide()
+        ctrl_area.addWidget(self.progresso_barra)
+
+        # Cancel button
+        self.btn_cancelar = QPushButton("Cancelar")
+        self.btn_cancelar.setObjectName("btnCancelar")
+        self.btn_cancelar.setStyleSheet("QPushButton { background: transparent; color: #E17055; border: 1px solid #E17055; border-radius: 4px; padding: 4px 16px; font-size: 9pt; } QPushButton:hover { background: #E17055; color: white; }")
+        self.btn_cancelar.clicked.connect(self._cancelar_processamento)
+        self.btn_cancelar.hide()
+        ctrl_area.addWidget(self.btn_cancelar, alignment=Qt.AlignCenter)
+
+        # Status label
+        self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("statusLabel")
+        self.lbl_status.setAlignment(Qt.AlignCenter)
+        ctrl_area.addWidget(self.lbl_status)
+
+        left.addLayout(ctrl_area)
+
+        root.addLayout(left, stretch=7)
+
+        # ════════════════════════════════════════════════════════════════════
+        # ── RIGHT: Inspector (fixed 320px) ──
+        # ════════════════════════════════════════════════════════════════════
+        card = QFrame()
+        card.setObjectName("card")
+        card.setMinimumWidth(320)
+        card.setMaximumWidth(320)
+        shadow_card = QGraphicsDropShadowEffect()
+        shadow_card.setBlurRadius(16)
+        shadow_card.setOffset(0, 4)
+        shadow_card.setColor(QColor(0, 0, 0, 50))
+        card.setGraphicsEffect(shadow_card)
+
+        cfg = QVBoxLayout(card)
+        cfg.setContentsMargins(24, 24, 24, 24)
+        cfg.setSpacing(24)
+
+        # ── MODO ──
+        lbl_modo = QLabel("MODO")
+        lbl_modo.setObjectName("sectionTitle")
+        cfg.addWidget(lbl_modo)
+
+        self.rb_redim = QRadioButton("Apenas redimensionar")
+        self.rb_redim.setToolTip("Corta e redimensiona para 1200×1200 (máx 2MB por arquivo)")
+        cfg.addWidget(self.rb_redim)
+        self.rb_rem = QRadioButton("Remover fundo + redimensionar")
+        self.rb_rem.setToolTip("Remove o fundo com IA e redimensiona para 1200×1200 (máx 350KB)")
+        cfg.addWidget(self.rb_rem)
         self.rb_redim.setChecked(True)
-        layout_modo.addWidget(self.rb_redim)
-        layout_modo.addWidget(self.rb_rem)
-        layout.addWidget(modo_group)
 
-        row_arquivo = QHBoxLayout()
-        self.btn_selecionar = QPushButton("Selecionar Imagens")
+        # ── ARQUIVOS ──
+        lbl_arq = QLabel("ARQUIVOS")
+        lbl_arq.setObjectName("sectionTitle")
+        cfg.addWidget(lbl_arq)
+
+        row_arq = QHBoxLayout()
+        row_arq.setSpacing(8)
+        self.btn_selecionar = QPushButton("Selecionar")
+        self.btn_selecionar.setObjectName("btnSelecionar")
+        self.btn_selecionar.setToolTip("Escolha as imagens que deseja processar (Ctrl+O)")
         self.btn_selecionar.clicked.connect(self.selecionar)
-        row_arquivo.addWidget(self.btn_selecionar)
-        self.lbl_qtd = QLabel("Nenhuma imagem selecionada")
-        self.lbl_qtd.setStyleSheet("color: #666;")
-        row_arquivo.addWidget(self.lbl_qtd)
-        row_arquivo.addStretch()
-        layout.addLayout(row_arquivo)
+        row_arq.addWidget(self.btn_selecionar)
+        self.entry_path = QLineEdit()
+        self.entry_path.setReadOnly(True)
+        self.entry_path.setPlaceholderText("Nenhuma imagem selecionada")
+        row_arq.addWidget(self.entry_path, stretch=1)
+        cfg.addLayout(row_arq)
 
         row_nome = QHBoxLayout()
-        row_nome.addWidget(QLabel("Nome base (SEO):"))
+        row_nome.setSpacing(8)
         self.entry_nome = QLineEdit()
-        self.entry_nome.setText("minha-imagem")
+        self.entry_nome.setPlaceholderText("Nome do produto")
+        self.entry_nome.setToolTip("Nome base para os arquivos de saída\nPreenchido automaticamente com o nome da primeira imagem")
         row_nome.addWidget(self.entry_nome)
-        row_nome.addWidget(QLabel("-1, -2, -3..."))
-        layout.addLayout(row_nome)
+        lbl_sfx = QLabel("-1, -2…")
+        lbl_sfx.setStyleSheet("color: #999; font-size: 9pt;")
+        row_nome.addWidget(lbl_sfx)
+        cfg.addLayout(row_nome)
 
-        self.crop_widget = CropWidget()
-        layout.addWidget(self.crop_widget, stretch=1)
+        # ── AJUSTES ──
+        lbl_ajustes = QLabel("AJUSTES")
+        lbl_ajustes.setObjectName("sectionTitle")
+        cfg.addWidget(lbl_ajustes)
 
-        row_zoom = QHBoxLayout()
-        row_zoom.addStretch()
-        self.btn_zoom_out = QPushButton("−")
-        self.btn_zoom_out.setFixedWidth(32)
-        self.btn_zoom_out.clicked.connect(self.crop_widget.zoom_out)
-        row_zoom.addWidget(self.btn_zoom_out)
-        btn_zoom_fit = QPushButton("Ajustar")
-        btn_zoom_fit.clicked.connect(self.crop_widget.zoom_fit)
-        row_zoom.addWidget(btn_zoom_fit)
-        self.btn_zoom_in = QPushButton("+")
-        self.btn_zoom_in.setFixedWidth(32)
-        self.btn_zoom_in.clicked.connect(self.crop_widget.zoom_in)
-        row_zoom.addWidget(self.btn_zoom_in)
-        row_zoom.addStretch()
-        layout.addLayout(row_zoom)
-
+        # Escala
         row_escala = QHBoxLayout()
-        row_escala.addWidget(QLabel("Escala do produto na saída:"))
+        row_escala.setSpacing(8)
+        lbl_est = QLabel("Escala:")
+        lbl_est.setToolTip("Controla o tamanho do produto na imagem final (modo remover fundo)")
+        row_escala.addWidget(lbl_est)
         self.escala_slider = QSlider(Qt.Horizontal)
         self.escala_slider.setRange(10, 100)
         self.escala_slider.setValue(100)
-        self.escala_slider.setFixedWidth(200)
-        row_escala.addWidget(self.escala_slider)
+        self.escala_slider.setToolTip("Quanto menor, mais espaço em branco ao redor do produto")
+        row_escala.addWidget(self.escala_slider, stretch=1)
         self.lbl_escala = QLabel("100%")
-        self.lbl_escala.setFixedWidth(40)
+        self.lbl_escala.setObjectName("escalaVal")
+        self.lbl_escala.setFixedWidth(36)
+        self.lbl_escala.setAlignment(Qt.AlignRight)
         row_escala.addWidget(self.lbl_escala)
-        self.escala_slider.valueChanged.connect(
-            lambda v: self.lbl_escala.setText(f"{v}%")
-        )
-        row_escala.addStretch()
-        layout.addLayout(row_escala)
+        self.escala_slider.valueChanged.connect(lambda v: self.lbl_escala.setText(f"{v}%"))
+        cfg.addLayout(row_escala)
 
+        # Photo navigation frame
+        nav_frame = QFrame()
+        nav_frame.setObjectName("navFrame")
+        nav_layout = QHBoxLayout(nav_frame)
+        nav_layout.setContentsMargins(8, 4, 8, 4)
+        nav_layout.setSpacing(8)
+        self.btn_prev = QPushButton("◀")
+        self.btn_prev.setObjectName("btnNav")
+        self.btn_prev.setToolTip("Imagem anterior (←)")
+        self.btn_prev.clicked.connect(self.anterior)
+        nav_layout.addWidget(self.btn_prev)
+        self.lbl_contador = QLabel("")
+        self.lbl_contador.setAlignment(Qt.AlignCenter)
+        self.lbl_contador.setStyleSheet("font-weight: 500;")
+        nav_layout.addWidget(self.lbl_contador, stretch=1)
+        self.btn_prox = QPushButton("▶")
+        self.btn_prox.setObjectName("btnNav")
+        self.btn_prox.setToolTip("Próxima imagem (→)")
+        self.btn_prox.clicked.connect(self.proximo)
+        nav_layout.addWidget(self.btn_prox)
+        cfg.addWidget(nav_frame)
+
+        # Watermark
         row_marca = QHBoxLayout()
-        self.chk_marca = QCheckBox("Adicionar marca d'água")
+        row_marca.setSpacing(8)
+        self.chk_marca = QCheckBox("Marca d'água")
+        self.chk_marca.setToolTip("Aplica uma grade diagonal do seu logo sobre a imagem")
         row_marca.addWidget(self.chk_marca)
-        self.btn_logo = QPushButton("Selecionar Logo")
+        self.btn_logo = QPushButton("Logo…")
+        self.btn_logo.setToolTip("Escolha uma imagem PNG para usar como marca d'água")
         self.btn_logo.clicked.connect(self.selecionar_logo)
         self.btn_logo.setEnabled(False)
         row_marca.addWidget(self.btn_logo)
-        self.lbl_logo = QLabel("Nenhum logo selecionado")
-        self.lbl_logo.setStyleSheet("color: #999;")
+        self.lbl_logo = QLabel("")
+        self.lbl_logo.setStyleSheet("color: #999; font-size: 11px;")
         row_marca.addWidget(self.lbl_logo, stretch=1)
         self.chk_marca.toggled.connect(self.btn_logo.setEnabled)
-        layout.addLayout(row_marca)
+        cfg.addLayout(row_marca)
 
-        row_nav = QHBoxLayout()
-        row_nav.addStretch()
-        self.btn_prev = QPushButton("◀")
-        self.btn_prev.clicked.connect(self.anterior)
-        row_nav.addWidget(self.btn_prev)
-        self.lbl_contador = QLabel("")
-        self.lbl_contador.setMinimumWidth(140)
-        self.lbl_contador.setAlignment(Qt.AlignCenter)
-        row_nav.addWidget(self.lbl_contador)
-        self.btn_prox = QPushButton("▶")
-        self.btn_prox.clicked.connect(self.proximo)
-        row_nav.addWidget(self.btn_prox)
-        row_nav.addStretch()
-        layout.addLayout(row_nav)
+        # Push CTA to bottom
+        cfg.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
-        self.btn_processar = QPushButton("Processar e Salvar")
+        # CTA button
+        self.btn_processar = QPushButton("PROCESSAR E SALVAR")
+        self.btn_processar.setObjectName("btnProcessar")
         self.btn_processar.setEnabled(False)
+        self.btn_processar.setToolTip("Iniciar o processamento e escolher pasta de destino (Ctrl+S)")
         self.btn_processar.clicked.connect(self.iniciar_processamento)
-        self.btn_processar.setStyleSheet(
-            "QPushButton { background: #4CAF50; color: white; font-weight: bold; "
-            "padding: 8px 24px; border-radius: 4px; font-size: 13px; }"
-            "QPushButton:disabled { background: #ccc; color: #888; }"
-        )
-        layout.addWidget(self.btn_processar, alignment=Qt.AlignCenter)
+        cfg.addWidget(self.btn_processar)
 
+        root.addWidget(card, alignment=Qt.AlignTop)
+
+        # ── Shortcuts ──
         QShortcut(QKeySequence("Ctrl+O"), self, self.selecionar)
         QShortcut(QKeySequence("Ctrl+S"), self, self.iniciar_processamento)
         QShortcut(QKeySequence("Ctrl++"), self, self.crop_widget.zoom_in)
@@ -226,21 +360,16 @@ class App(QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Left), self, self.anterior)
         QShortcut(QKeySequence(Qt.Key_Right), self, self.proximo)
 
-        self.setTabOrder(self.entry_nome, self.btn_selecionar)
+        self.setTabOrder(self.entry_path, self.btn_selecionar)
         self.setTabOrder(self.btn_selecionar, self.rb_redim)
         self.setTabOrder(self.rb_redim, self.rb_rem)
         self.setTabOrder(self.rb_rem, self.chk_marca)
         self.setTabOrder(self.chk_marca, self.btn_logo)
-        self.setTabOrder(self.btn_logo, self.escala_slider)
-        self.setTabOrder(self.escala_slider, self.btn_processar)
+        self.setTabOrder(self.btn_logo, self.btn_processar)
 
         log.debug("App.__init__: criando menu")
         self._criar_menu()
         log.debug("App.__init__: menu ok")
-
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Pronto")
 
         QTimer.singleShot(0, self._init_extras)
 
@@ -254,20 +383,28 @@ class App(QMainWindow):
         arq.addAction("Sair", self.close, QKeySequence("Alt+F4"))
 
         view = bar.addMenu("Exibir")
-        view.addAction("Zoom +", self.crop_widget.zoom_in, QKeySequence("Ctrl++"))
-        view.addAction("Zoom -", self.crop_widget.zoom_out, QKeySequence("Ctrl+-"))
-        view.addAction("Ajustar", self.crop_widget.zoom_fit, QKeySequence("Ctrl+0"))
+        view.addAction("Aumentar Zoom", self.crop_widget.zoom_in, QKeySequence("Ctrl++"))
+        view.addAction("Diminuir Zoom", self.crop_widget.zoom_out, QKeySequence("Ctrl+-"))
+        view.addAction("Ajustar à Tela", self.crop_widget.zoom_fit, QKeySequence("Ctrl+0"))
+        view.addSeparator()
+        self._act_tema = view.addAction("Alternar Tema Escuro")
+        self._act_tema.setCheckable(True)
+        self._act_tema.setChecked(self._dark_mode)
+        self._act_tema.triggered.connect(self._toggle_tema)
 
         ajuda = bar.addMenu("Ajuda")
-        ajuda.addAction("Sobre", self._mostrar_sobre)
+        ajuda.addAction("Sobre o LS Imagecomm", self._mostrar_sobre)
 
     def _mostrar_sobre(self):
         QMessageBox.about(self, "Sobre o LS Imagecomm",
-            "<b>LS Imagecomm</b><br><br>"
-            "Redimensiona imagens para 1200×1200,<br>"
-            "remove fundo com IA e adiciona marca d'água.<br><br>"
-            f"Versão: {VERSION}<br>"
-            "Totalmente offline.")
+            f"<h2>LS Imagecomm</h2>"
+            f"<p>Redimensiona imagens para <b>1200×1200</b>,<br>"
+            f"remove fundo com <b>IA</b> e adiciona <b>marca d'água</b>.</p>"
+            f"<hr>"
+            f"<p>Versão: <b>{VERSION}</b><br>"
+            f"Totalmente <b>offline</b> — seus arquivos nunca saem do seu computador.</p>"
+            f"<p style='color: #888; font-size: 11px;'>"
+            f"LS Imagecomm © 2026</p>")
 
     def _init_extras(self):
         log.debug("_init_extras: iniciando")
@@ -318,7 +455,17 @@ class App(QMainWindow):
         self.arquivos = arquivos
         self._coords_por_imagem = {}
         self.previa_index = 0
-        self.lbl_qtd.setText(f"{len(self.arquivos)} imagem(ns) selecionada(s)")
+        if len(arquivos) == 1:
+            self.entry_path.setText(arquivos[0])
+        else:
+            self.entry_path.setText(f"{len(arquivos)} imagens selecionadas")
+
+        # Auto-fill product name from first file if field is empty
+        if not self.entry_nome.text():
+            nome = os.path.splitext(os.path.basename(arquivos[0]))[0]
+            nome = self._sanitizar_nome(nome)
+            self.entry_nome.setText(nome)
+
         self.btn_processar.setEnabled(True)
         self.mostrar_previa()
 
@@ -375,7 +522,8 @@ class App(QMainWindow):
         if not self.arquivos:
             return
 
-        pasta = QFileDialog.getExistingDirectory(self, "Escolher pasta para salvar")
+        pasta_dir = os.path.dirname(self.arquivos[0]) if self.arquivos else ""
+        pasta = QFileDialog.getExistingDirectory(self, "Escolher pasta para salvar", pasta_dir)
         if not pasta:
             return
 
@@ -401,7 +549,8 @@ class App(QMainWindow):
         log.info("Iniciando — modo=%s, pasta=%s, %d imagem(ns)",
                  "remover_fundo" if remover else "redimensionar", pasta, len(self.arquivos))
         self._bloqueia_ui(True)
-        self.status_bar.showMessage("Processando...")
+        self.progresso_barra.setValue(0)
+        self.lbl_status.setText("Processando…")
 
         logo_path = self._logo_path if self.chk_marca.isChecked() else None
         self.worker = WorkerBatch(
@@ -410,10 +559,53 @@ class App(QMainWindow):
             logo_path=logo_path,
         )
         self.worker.progresso.connect(self._atualizar_progresso)
+        self.worker.cancelado.connect(self._processo_cancelado)
         if remover:
-            self.status_bar.showMessage("Removendo fundo (pode levar alguns segundos na primeira vez)...")
+            self.lbl_status.setText("Removendo fundo (primeira vez pode levar alguns segundos)…")
         self.worker.finalizado.connect(self._finalizar)
         self.worker.start()
+
+    def _cancelar_processamento(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.lbl_status.setText("Cancelando…")
+            self.btn_cancelar.setEnabled(False)
+
+    def _processo_cancelado(self):
+        self._bloqueia_ui(False)
+        self.progresso_barra.setValue(0)
+        self.lbl_status.setText("")
+        self.btn_processar.setEnabled(True)
+        QMessageBox.information(self, "Cancelado", "Processamento cancelado pelo usuário.")
+
+    def _load_config(self, key, default=None):
+        try:
+            if os.path.isfile(self._config_path):
+                with open(self._config_path, "r") as f:
+                    cfg = __import__("json").load(f)
+                return cfg.get(key, default)
+        except Exception:
+            pass
+        return default
+
+    def _save_config(self, key, value):
+        try:
+            os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
+            cfg = {}
+            if os.path.isfile(self._config_path):
+                with open(self._config_path, "r") as f:
+                    cfg = __import__("json").load(f)
+            cfg[key] = value
+            with open(self._config_path, "w") as f:
+                __import__("json").dump(cfg, f)
+        except Exception:
+            pass
+
+    def _toggle_tema(self):
+        self._dark_mode = not self._dark_mode
+        self._save_config("dark_mode", self._dark_mode)
+        from redimensionar.theme import aplicar_tema
+        aplicar_tema(QApplication.instance(), dark=self._dark_mode)
 
     def _sanitizar_nome(self, nome):
         nome = nome.strip().lower().replace(" ", "-")
@@ -429,12 +621,14 @@ class App(QMainWindow):
         self.btn_prox.setEnabled(not bloqueado)
         self.btn_zoom_in.setEnabled(not bloqueado)
         self.btn_zoom_out.setEnabled(not bloqueado)
-        self.entry_nome.setEnabled(not bloqueado)
+        self.entry_path.setEnabled(not bloqueado)
         self.rb_redim.setEnabled(not bloqueado)
         self.rb_rem.setEnabled(not bloqueado)
         self.escala_slider.setEnabled(not bloqueado)
         self.chk_marca.setEnabled(not bloqueado)
         self.btn_logo.setEnabled(not bloqueado and self.chk_marca.isChecked())
+        self.progresso_barra.setVisible(bloqueado)
+        self.btn_cancelar.setVisible(bloqueado)
 
     def _atualizar_progresso(self, nome, atual, total):
         if self._taskbar_progress is not None and total:
@@ -444,20 +638,25 @@ class App(QMainWindow):
             except Exception:
                 pass
 
+        pct = int(atual * 100 / total) if total else 0
+        self.progresso_barra.setValue(pct)
+
         if nome:
-            self.status_bar.showMessage(f"Processando: {nome}")
+            self.lbl_status.setText(f"Processando: {nome} ({pct}%)")
         elif self._process_start and atual > 0:
             import time
             decorrido = time.time() - self._process_start
             por_img = decorrido / atual
             restante = por_img * (total - atual)
             eta = f"{int(restante // 60)}m{int(restante % 60):02d}s"
-            self.status_bar.showMessage(f"Processando... {atual}/{total} — ETA {eta}")
+            self.lbl_status.setText(f"{pct}%  |  {atual}/{total}  |  ETA {eta}")
         else:
-            self.status_bar.showMessage(f"Processando... {atual}/{total}")
+            self.lbl_status.setText(f"{pct}%")
 
     def _finalizar(self, ok, erros, pasta):
         self._bloqueia_ui(False)
+        self.progresso_barra.setValue(100 if ok else 0)
+        self.lbl_status.setText("")
         if ok:
             self.btn_processar.setEnabled(True)
 
@@ -467,11 +666,6 @@ class App(QMainWindow):
                 QTimer.singleShot(1500, self._taskbar_progress.hide)
             except Exception:
                 pass
-
-        texto = f"{ok} imagem(ns) salva(s)"
-        if erros:
-            texto += f" com {len(erros)} erro(s)"
-        self.status_bar.showMessage(texto)
 
         if self._tray is not None:
             try:
@@ -496,11 +690,19 @@ def main():
     log.info("LS Imagecomm v%s — iniciando", VERSION)
     sys.excepthook = _excepthook
 
+    cfg_path = os.path.join(os.path.expanduser("~"), ".ls-imagecomm", "config.json")
+    dark = False
+    try:
+        if os.path.isfile(cfg_path):
+            with open(cfg_path, "r") as f:
+                dark = __import__("json").load(f).get("dark_mode", False)
+    except Exception:
+        pass
+
     log.debug("main: criando QApplication")
     app = QApplication(sys.argv)
-    log.debug("main: QApplication ok, setando style")
-    app.setStyle("Fusion")
-    log.debug("main: style ok")
+    aplicar_tema(app, dark=dark)
+    log.debug("main: tema aplicado")
     ico_path = os.path.join(os.path.dirname(__file__), "app_icon.png")
     if not os.path.isfile(ico_path):
         try:
@@ -523,7 +725,10 @@ def main():
     janela = App()
     log.debug("main: App() ok, show()")
     janela.show()
+    center = QApplication.primaryScreen().availableGeometry().center()
+    janela.move(center.x() - janela.width() // 2, center.y() - janela.height() // 2)
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()

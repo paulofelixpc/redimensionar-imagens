@@ -1,13 +1,31 @@
-.venv/
-__pycache__/
+# --- Python ---
 *.pyc
 *.pyo
-.env
-.pytest_cache/
-.mypy_cache/
-build/
-dist/
-*.spec
-.opencode/
-logs/
+*.pyd
+__pycache__/
 *.egg-info/
+dist/
+build/
+*.spec
+
+# --- Virtual env ---
+.venv/
+venv/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+Thumbs.db
+.DS_Store
+*.log
+
+# --- Project ---
+logs/
+.opencode/
+
+# --- Config ---
+.env
